@@ -1,0 +1,8 @@
+# Kafka/Redpanda client — ships prebuilt wheels (bundles librdkafka), no compiler needed
+confluent-kafka==2.6.1
+
+# HTTP client for polling the public crypto price API
+requests==2.32.3
+
+# Load configuration from a local .env during development
+python-dotenv==1.0.1

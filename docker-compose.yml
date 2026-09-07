@@ -1,0 +1,61 @@
+# Local dev stack for the crypto streaming pipeline.
+#
+#   docker compose up -d      # start Redpanda + Postgres in the background
+#   docker compose ps         # check both are healthy
+#   docker compose down       # stop and remove the containers
+#   docker compose down -v    # ...and wipe their data volumes
+#
+# Redpanda is a single-binary, Kafka-API-compatible streaming platform, so the
+# producer talks to it with a standard Kafka client on localhost:9092.
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    container_name: crypto-redpanda
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+      # Two listeners: INTERNAL for other containers, EXTERNAL for the host.
+      - --kafka-addr=INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      # The host connects via localhost, so EXTERNAL must advertise localhost.
+      - --advertise-kafka-addr=INTERNAL://redpanda:29092,EXTERNAL://localhost:9092
+    ports:
+      - "9092:9092"    # Kafka API (host -> Redpanda)
+      - "9644:9644"    # Admin API / metrics
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: crypto-postgres
+    environment:
+      POSTGRES_USER: crypto
+      POSTGRES_PASSWORD: crypto
+      POSTGRES_DB: crypto
+    ports:
+      # Host 5434 -> container 5432 to avoid clashing with a local Postgres.
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crypto -d crypto"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  redpanda-data:
+  postgres-data:
