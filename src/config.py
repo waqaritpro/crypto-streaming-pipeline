@@ -51,6 +51,30 @@ class Config:
     bootstrap_servers: str = os.getenv("BOOTSTRAP_SERVERS", "localhost:9092")
     # Topic that price messages are published to.
     topic: str = os.getenv("TOPIC", "crypto-prices")
+    # Consumer group id; all consumers sharing it split the topic's partitions.
+    consumer_group: str = os.getenv("CONSUMER_GROUP", "crypto-price-writer")
+    # How many messages the consumer batches into one DB transaction.
+    consumer_batch_size: int = int(os.getenv("CONSUMER_BATCH_SIZE", "100"))
+    # Max seconds to wait filling a batch before flushing what we have.
+    consumer_batch_timeout_seconds: float = float(
+        os.getenv("CONSUMER_BATCH_TIMEOUT_SECONDS", "2")
+    )
+
+    # --- Postgres --------------------------------------------------------
+    # From the host, Postgres is published on 5434 (see docker-compose.yml).
+    postgres_host: str = os.getenv("POSTGRES_HOST", "localhost")
+    postgres_port: int = int(os.getenv("POSTGRES_PORT", "5434"))
+    postgres_db: str = os.getenv("POSTGRES_DB", "crypto")
+    postgres_user: str = os.getenv("POSTGRES_USER", "crypto")
+    postgres_password: str = os.getenv("POSTGRES_PASSWORD", "crypto")
+
+    def dsn(self) -> str:
+        """libpq connection string for psycopg2."""
+        return (
+            f"host={self.postgres_host} port={self.postgres_port} "
+            f"dbname={self.postgres_db} user={self.postgres_user} "
+            f"password={self.postgres_password}"
+        )
 
     def pairs(self) -> list[str]:
         """Return trading pairs, e.g. ['BTC-USD', 'ETH-USD']."""

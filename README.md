@@ -4,7 +4,8 @@ A hands-on data engineering case study: stream live cryptocurrency prices from a
 public API through a Kafka-compatible log (Redpanda) and into Postgres, then
 model and serve the data for analytics — built incrementally over four weeks.
 
-> **Status:** Week 1 of 4 complete — ingestion into the streaming log is live.
+> **Status:** Week 2 of 4 complete — prices now stream through the log and land
+> in Postgres.
 
 ---
 
@@ -42,9 +43,15 @@ that mirrors how production streaming stacks are put together.
                                                                        │  consume
                                                                        ▼
                                                             ┌──────────────────────┐
+                                                            │  Consumer            │
+                                                            │  src/consumer.py     │
+                                                            │  idempotent inserts  │
+                                                            └──────────┬───────────┘
+                                                                       │  write
+                                                                       ▼
+                                                            ┌──────────────────────┐
                                                             │  Postgres            │
-                                                            │  price history       │
-                                                            │  (Week 2)            │
+                                                            │  crypto_prices table │
                                                             └──────────────────────┘
 ```
 
@@ -86,9 +93,12 @@ crypto-streaming-pipeline/
 ├── docker-compose.yml     # Redpanda + Postgres local stack
 ├── requirements.txt       # Python dependencies
 ├── .env.example           # Configuration template
+├── sql/
+│   └── schema.sql         # crypto_prices table + indexes (idempotent)
 ├── src/
 │   ├── config.py          # Central, env-overridable configuration
-│   └── producer.py        # Polls the price API, publishes to Redpanda
+│   ├── producer.py        # Polls the price API, publishes to Redpanda
+│   └── consumer.py        # Reads the topic, writes prices to Postgres
 └── README.md
 ```
 
@@ -130,6 +140,29 @@ built-in `rpk` CLI (runs inside the container):
 docker exec -it crypto-redpanda rpk topic consume crypto-prices --num 5
 ```
 
+**5. Run the consumer** (in a second terminal) to persist the topic into
+Postgres. It creates the `crypto_prices` table on first run, then writes
+batches continuously:
+
+```bash
+python -m src.consumer
+```
+
+You'll see a line per flushed batch, e.g.
+`Batch flushed: 6 consumed, 6 inserted, 0 duplicate(s) ignored`. Stop it with
+`Ctrl+C` — the final batch is flushed and offsets committed on the way out.
+
+Inserts are idempotent on `(pair, event_ts)`, so re-running the consumer or
+replaying the topic never creates duplicate rows.
+
+**6. Verify rows landed in Postgres:**
+
+```bash
+docker exec -it crypto-postgres psql -U crypto -d crypto \
+  -c "SELECT count(*) FROM crypto_prices;" \
+  -c "SELECT pair, price, event_ts FROM crypto_prices ORDER BY event_ts DESC LIMIT 5;"
+```
+
 **Configuration** — override any default via environment variables or a `.env`
 file (see `.env.example`). For example, to track different coins:
 
@@ -151,8 +184,10 @@ docker compose down -v    # ...and delete their data volumes
 - [x] **Week 1 — Ingestion.** Project scaffold, Dockerised Redpanda + Postgres,
       and a configurable producer streaming live prices into the `crypto-prices`
       topic. Verified end to end by consuming messages off the topic.
-- [ ] **Week 2 — Persistence.** A consumer that reads the topic and writes price
-      history into Postgres, with a sensible schema and idempotent upserts.
+- [x] **Week 2 — Persistence.** A consumer (`src/consumer.py`) that reads the
+      topic and writes price history into the `crypto_prices` table, with a
+      sensible schema, batched idempotent inserts, logging, and graceful
+      shutdown. Offsets are committed only after each batch is durably written.
 - [ ] **Week 3 — Modelling.** Transform raw ticks into analytics-ready tables
       (OHLC candles, rolling averages) and add data-quality checks.
 - [ ] **Week 4 — Serving & polish.** A dashboard/API over the modelled data,

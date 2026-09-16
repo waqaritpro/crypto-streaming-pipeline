@@ -4,5 +4,8 @@ confluent-kafka==2.6.1
 # HTTP client for polling the public crypto price API
 requests==2.32.3
 
+# Postgres driver for the consumer — prebuilt wheels, no compiler needed
+psycopg2-binary==2.9.10
+
 # Load configuration from a local .env during development
 python-dotenv==1.0.1
