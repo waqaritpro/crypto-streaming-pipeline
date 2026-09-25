@@ -60,6 +60,28 @@ class Config:
         os.getenv("CONSUMER_BATCH_TIMEOUT_SECONDS", "2")
     )
 
+    # --- Aggregation / windowing (Week 3) --------------------------------
+    # Consumer group for the aggregator; separate from the writer so it reads
+    # the full topic independently of the Postgres consumer.
+    aggregator_group: str = os.getenv("AGGREGATOR_GROUP", "crypto-aggregator")
+    # Width of each aggregation window, in seconds (60 = rolling 1-minute).
+    window_seconds: int = int(os.getenv("WINDOW_SECONDS", "60"))
+    # How often the aggregator upserts its open windows to Postgres.
+    aggregator_flush_seconds: float = float(
+        os.getenv("AGGREGATOR_FLUSH_SECONDS", "10")
+    )
+
+    # --- Data-quality thresholds (Week 3) --------------------------------
+    # Prices outside (min, max] are treated as out-of-range errors and dropped.
+    dq_price_min: float = float(os.getenv("DQ_PRICE_MIN", "0"))
+    dq_price_max: float = float(os.getenv("DQ_PRICE_MAX", "10000000"))
+    # A tick older than this many seconds (vs. wall clock) is flagged stale.
+    dq_staleness_seconds: float = float(os.getenv("DQ_STALENESS_SECONDS", "120"))
+    # A tick timestamped more than this far in the future is flagged too.
+    dq_future_seconds: float = float(os.getenv("DQ_FUTURE_SECONDS", "60"))
+    # A move larger than this percent vs. the pair's previous price is flagged.
+    dq_max_jump_pct: float = float(os.getenv("DQ_MAX_JUMP_PCT", "20"))
+
     # --- Postgres --------------------------------------------------------
     # From the host, Postgres is published on 5434 (see docker-compose.yml).
     postgres_host: str = os.getenv("POSTGRES_HOST", "localhost")

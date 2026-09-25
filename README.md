@@ -4,8 +4,9 @@ A hands-on data engineering case study: stream live cryptocurrency prices from a
 public API through a Kafka-compatible log (Redpanda) and into Postgres, then
 model and serve the data for analytics — built incrementally over four weeks.
 
-> **Status:** Week 2 of 4 complete — prices now stream through the log and land
-> in Postgres.
+> **Status:** Week 3 of 4 complete — prices stream through the log, land in
+> Postgres, and are now modelled into windowed aggregates with data-quality
+> checks running on the stream.
 
 ---
 
@@ -53,11 +54,21 @@ that mirrors how production streaming stacks are put together.
                                                             │  Postgres            │
                                                             │  crypto_prices table │
                                                             └──────────────────────┘
+
+  The aggregator reads the same topic in its own consumer group:
+
+  ┌──────────────────────┐  consume   ┌──────────────────────┐  upsert   ┌──────────────────────┐
+  │  Redpanda            ├───────────►│  Aggregator          ├──────────►│  Postgres            │
+  │  topic:              │   msgs     │  src/aggregator.py   │           │  price_aggregates    │
+  │  "crypto-prices"     │            │  DQ checks + 1-min   │           │  data_quality_events │
+  └──────────────────────┘            │  windows (avg/hi/lo) │           └──────────────────────┘
+                                       └──────────────────────┘
 ```
 
 Redpanda and Postgres both run locally via `docker-compose`. The producer runs
 on the host and talks to Redpanda over the standard Kafka protocol on
-`localhost:9092`.
+`localhost:9092`. The consumer and the aggregator are independent consumer
+groups over the same topic, so each reads the full stream without competing.
 
 **Message shape** published to the `crypto-prices` topic (keyed by trading pair):
 
@@ -94,11 +105,16 @@ crypto-streaming-pipeline/
 ├── requirements.txt       # Python dependencies
 ├── .env.example           # Configuration template
 ├── sql/
-│   └── schema.sql         # crypto_prices table + indexes (idempotent)
+│   ├── schema.sql         # crypto_prices table + indexes (idempotent)
+│   └── aggregates.sql     # price_aggregates + data_quality_events (idempotent)
 ├── src/
 │   ├── config.py          # Central, env-overridable configuration
 │   ├── producer.py        # Polls the price API, publishes to Redpanda
-│   └── consumer.py        # Reads the topic, writes prices to Postgres
+│   ├── consumer.py        # Reads the topic, writes prices to Postgres
+│   ├── quality.py         # Data-quality checks run on each streamed message
+│   ├── aggregator.py      # 1-minute windowed aggregates + DQ event logging
+│   ├── dq_inject.py       # Demo: inject bad messages to exercise the DQ checks
+│   └── reports.py         # Print the aggregates + a data-quality report
 └── README.md
 ```
 
@@ -170,6 +186,40 @@ file (see `.env.example`). For example, to track different coins:
 COINS=BTC,ETH,DOGE,ADA python -m src.producer
 ```
 
+**7. Run the aggregator** (a third terminal) to model the stream into
+1-minute windows and log data-quality problems. It creates the
+`price_aggregates` and `data_quality_events` tables on first run:
+
+```bash
+python -m src.aggregator
+```
+
+You'll see a line per flush, e.g.
+`Flushed: 3 window(s) upserted, 0 DQ event(s) logged`. Each window row holds the
+rolling **average**, **high**, and **low** for one trading pair over one minute.
+Stop it with `Ctrl+C` — open windows are flushed and offsets committed on exit.
+
+**8. See the aggregates and a data-quality report:**
+
+```bash
+python -m src.reports
+```
+
+To *prove the DQ checks fire*, inject a batch of deliberately broken messages
+(missing fields, negative/absurd prices, a stale timestamp, a duplicate, a
+malformed payload) onto the topic, then re-run the report:
+
+```bash
+python -m src.dq_inject     # crafts one bad message per check
+python -m src.reports       # the DATA-QUALITY REPORT now lists them
+```
+
+The aggregator's checks (see `src/quality.py`): **missing/null fields** and
+**non-numeric or out-of-range prices** are `error`s and dropped from the
+aggregates; **duplicates** (same `pair`+`ts`) are dropped so they aren't
+double-counted; **stale/future timestamps** and **implausible price jumps** are
+`warning`s that are kept but flagged.
+
 **Tear down** when you're done:
 
 ```bash
@@ -188,8 +238,13 @@ docker compose down -v    # ...and delete their data volumes
       topic and writes price history into the `crypto_prices` table, with a
       sensible schema, batched idempotent inserts, logging, and graceful
       shutdown. Offsets are committed only after each batch is durably written.
-- [ ] **Week 3 — Modelling.** Transform raw ticks into analytics-ready tables
-      (OHLC candles, rolling averages) and add data-quality checks.
+- [x] **Week 3 — Modelling.** An aggregator (`src/aggregator.py`) that reads the
+      topic in its own consumer group, computes rolling 1-minute windows per
+      trading pair (average + high/low + sample count) into `price_aggregates`,
+      and runs data-quality checks (`src/quality.py`) on every message —
+      missing fields, out-of-range prices, stale/duplicate ticks — logging each
+      problem to `data_quality_events`. `src/reports.py` prints the aggregates
+      and a quality report.
 - [ ] **Week 4 — Serving & polish.** A dashboard/API over the modelled data,
       containerise the producer/consumer, and document the full case study.
 
